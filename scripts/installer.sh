@@ -60,7 +60,7 @@ OH_CONF="${OH_FOLDER}/conf"
 OH_ADDONS="${OH_FOLDER}/addons"
 OH_USERDATA="${OH_FOLDER}/userdata"
 TIMESTAMP="$(date +%Y%m)"
-BACKUP_FOLDER="${SYNOPKG_PKGDEST}-backup-$TIMESTAMP"
+BACKUP_FOLDER="/tmp/openhab2/backup"
 
 echo "  tmp:    ${TEMP_FOLDER}" >>$LOG
 echo "  share:  ${SHARE_FOLDER}" >>$LOG
@@ -252,15 +252,22 @@ postinst ()
   mkdir -p ${SYNOPKG_PKGDEST}/userdata/logs
   touch ${SYNOPKG_PKGDEST}/userdata/logs/openhab.log
   
-  # Restore UserData if exists
-  if [ -d ${BACKUP_FOLDER} ]; then
-    echo "  Restore userdata to ${SYNOPKG_PKGDEST}" >>$LOG
-    cp -arf ${BACKUP_FOLDER}/userdata ${SYNOPKG_PKGDEST}/
-    if [ -d ${BACKUP_FOLDER}/userdir ]; then
-      echo "  Restore configuration files to ${OH_FOLDER}" >>$LOG
-      cp -arf ${BACKUP_FOLDER}/userdir/* ${OH_FOLDER}
-    fi 
-  fi
+  ## Restore conf, userdata & addons
+  echo "  Restoring openHAB with backup conf configuration..." >>$LOG
+  command cp -af "${BACKUP_FOLDER}/conf/"*     "${OH_CONF:?}/" || {
+    echo "Failed to copy ${BACKUP_FOLDER}/conf/ to ${OH_CONF}/..." >>$LOG
+    echo "Please check ${BACKUP_FOLDER} and replace conf." >>$LOG
+  }
+  echo "  Restoring openHAB with backup userdata configuration..." >>$LOG
+  command cp -af "${BACKUP_FOLDER}/userdata/"* "${OH_USERDATA:?}/" || {
+    echo "Failed to copy ${BACKUP_FOLDER}/userdata/ to ${OH_USERDATA}/..." >>$LOG
+    echo "Please check ${BACKUP_FOLDER} and replace userdata." >>$LOG
+  }
+  echo "  Restoring openHAB with backup addons configuration..." >>$LOG
+  command cp -af "${BACKUP_FOLDER}/addons/"* "${OH_ADDONS:?}/" || {
+    echo "Failed to copy ${BACKUP_FOLDER}/addons/ to ${OH_ADDONS}/..." >>$LOG
+    echo "Please check ${BACKUP_FOLDER} and replace addons." >>$LOG
+  }
   
   #change owner of folder tree
   echo "  Fix permissions" >>$LOG
@@ -346,47 +353,54 @@ preupgrade ()
   fi
   sleep 10
   
-  echo "  Remove tmp, cache and runtime dirs" >>$LOG
-  # Remove tmp, logs, cache and runtime dirs
-  if [ -d ${SYNOPKG_PKGDEST}/userdata/tmp ]; then
-  	rm -rf ${SYNOPKG_PKGDEST}/userdata/tmp
-  fi
+  echo "  Backing up openHAB confs, addons & userdata" >>$LOG
+  echo "Using '${OH_CONF}' as conf folder..." >>$LOG
+  echo "Using '${OH_ADDONS}' as addons folder..." >>$LOG
+  echo "Using '${OH_USERDATA}' as userdata folder..." >>$LOG
+  CurrentVersion="$(awk '/openhab-distro/{print $3}' "${OH_USERDATA}/etc/version.properties")"
+  timestamp=$(date +"%y_%m_%d-%H_%M_%S")
 
-  if [ -d ${SYNOPKG_PKGDEST}/userdata/cache ]; then
-  	rm -rf ${SYNOPKG_PKGDEST}/userdata/cache
-  fi
+  ## Store anything in temporary folders
+  echo "Making Backup Directory" >>$LOG
+  mkdir -p "${BACKUP_FOLDER}" || {
+    echo "Failed to make temporary directory: ${BACKUP_FOLDER}" >>$LOG
+    exit 1
+  }
 
-  if [ -d ${SYNOPKG_PKGDEST}/userdata/log ]; then
-  	rm -rf ${SYNOPKG_PKGDEST}/userdata/log
-  fi
+  ## Clear older stuff if it exists
+  rm -rf "${BACKUP_FOLDER:?}/"*
 
-  if [ -d ${SYNOPKG_PKGDEST}/userdata/logs ]; then
-  	rm -rf ${SYNOPKG_PKGDEST}/userdata/logs
-  fi
-  
-  if [ -d ${SYNOPKG_PKGDEST}/runtime ]; then
-    rm -rf ${SYNOPKG_PKGDEST}/runtime
-  fi
-  
-  echo "  Remove openHAB system files" >>$LOG
-  # Remove openHAB system files...
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/all.policy
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/branding.properties
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/branding-ssh.properties
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/config.properties
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/custom.properties
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/version.properties
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/distribution.info
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/jre.properties
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/profile.cfg
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/startup.properties
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/org.apache.karaf*
-  rm -f ${SYNOPKG_PKGDEST}/userdata/etc/org.ops4j.pax.url.mvn.cfg
-  
-  echo "  Create backup" >>$LOG
-  # Create backup
-  mkdir -p ${BACKUP_FOLDER}/userdata
-  mv ${SYNOPKG_PKGDEST}/userdata/* ${BACKUP_FOLDER}/userdata
+  ## Set backup properties file.
+  {
+    echo "version=$CurrentVersion"
+    echo "timestamp=$timestamp"
+  } > "${BACKUP_FOLDER}/backup.properties"
+
+  ## Copy userdata, conf & addons folders
+  echo "Copying configuration to temporary folder..." >>$LOG
+  mkdir -p "${BACKUP_FOLDER}/userdata"
+  cp -a "${OH_USERDATA:?}/"*  "${BACKUP_FOLDER}/userdata"
+  mkdir -p "${BACKUP_FOLDER}/conf"
+  cp -a "${OH_CONF:?}/"*      "${BACKUP_FOLDER}/conf"
+  mkdir -p "${BACKUP_FOLDER}/addons"
+  cp -a "${OH_ADDONS:?}/"*      "${BACKUP_FOLDER}/addons"
+
+  ## Remove non-transferable userdata files
+  echo "Removing unnecessary files..." >>$LOG
+  rm -rf "${BACKUP_FOLDER}/userdata/cache"
+  rm -rf "${BACKUP_FOLDER}/userdata/tmp"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/all.policy"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/branding.properties"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/branding-ssh.properties"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/config.properties"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/custom.properties"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/version.properties"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/distribution.info"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/jre.properties"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/profile.cfg"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/startup.properties"
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/org.apache.karaf"*
+  rm -rf "${BACKUP_FOLDER}/userdata/etc/org.ops4j.pax.url.mvn.cfg"
   
   # save home dir content if exists or save current content for the new location
   LINK_FOLDER="$(readlink ${SYNOPKG_PKGDEST}/conf)"
@@ -414,9 +428,7 @@ preupgrade ()
 postupgrade ()
 {
   echo "Start postupgrade..." >>$LOG
-  # Remove all backups after installation
-  rm -rf ${SYNOPKG_PKGDEST}-backup*
-  
+
   echo "done" >>$LOG
   echo "Update done." > $SYNOPKG_TEMP_LOGFILE
   
